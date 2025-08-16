@@ -216,7 +216,7 @@ func (r *resultImpl) Stderr() []byte {
 
 // ------------------------------------------- Future impl --------------------------------------
 
-func (cm *cmdImpl) Start() {
+func (cm *cmdImpl) Start() future.Future[Result] {
 	if cm.parent != nil {
 		cm.parent.Start()
 	}
@@ -224,6 +224,8 @@ func (cm *cmdImpl) Start() {
 	cm.once.Do(func() {
 		go cm.execute()
 	})
+
+	return cm
 }
 
 func (cm *cmdImpl) Cancel() {

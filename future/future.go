@@ -7,7 +7,7 @@ import (
 )
 
 type Future[T any] interface {
-	Start()
+	Start() Future[T]
 	Cancel()
 	Wait() (T, error)
 	Done() chan any
@@ -27,10 +27,11 @@ type futureImpl[T any] struct {
 	mu   sync.RWMutex
 }
 
-func (fu *futureImpl[T]) Start() {
+func (fu *futureImpl[T]) Start() Future[T] {
 	fu.once.Do(func() {
 		go fu.execute()
 	})
+	return fu
 }
 
 func (fu *futureImpl[T]) Cancel() {
