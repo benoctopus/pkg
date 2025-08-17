@@ -4,6 +4,7 @@ package future
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 type Future[T any] interface {
@@ -100,10 +101,6 @@ func WaitAll[T any](ctx context.Context, fus ...Future[T]) ([]T, error) {
 	res := make([]T, 0, len(fus))
 
 	for _, fu := range fus {
-		fu.Start()
-	}
-
-	for _, fu := range fus {
 		select {
 		case <-fu.Done():
 			r, err := fu.Wait()
@@ -121,4 +118,17 @@ func WaitAll[T any](ctx context.Context, fus ...Future[T]) ([]T, error) {
 	}
 
 	return res, nil
+}
+
+func WaitTimeout[T any](d time.Duration, fu Future[T]) (r T, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+
+	select {
+	case <-fu.Done():
+		return fu.Wait()
+	case <-ctx.Done():
+		fu.Cancel()
+		return r, ctx.Err()
+	}
 }

@@ -206,3 +206,261 @@ func TestContextCancellation(t *testing.T) {
 		t.Errorf("Expected empty result on cancellation, got %v", result)
 	}
 }
+
+func TestWaitTimeout_Success(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (string, error) {
+		time.Sleep(10 * time.Millisecond)
+		return "completed", nil
+	}
+
+	future := Start(ctx, fn)
+
+	// Wait with a timeout longer than the execution time
+	result, err := WaitTimeout(50*time.Millisecond, future)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+	if result != "completed" {
+		t.Errorf("Expected 'completed', got %v", result)
+	}
+
+	// Future should be done
+	if !future.IsDone() {
+		t.Error("Future should be done after successful completion")
+	}
+}
+
+func TestWaitTimeout_Timeout(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (string, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "completed", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	future := Start(ctx, fn)
+
+	// Wait with a timeout shorter than the execution time
+	result, err := WaitTimeout(20*time.Millisecond, future)
+	if err == nil {
+		t.Error("Expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got %v", err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty result on timeout, got %v", result)
+	}
+
+	// Give a small amount of time for the cancellation to propagate
+	time.Sleep(5 * time.Millisecond)
+	
+	// Future should be done after timeout (due to cancellation)
+	if !future.IsDone() {
+		t.Error("Future should be done after timeout cancellation")
+	}
+}
+
+func TestWaitTimeout_FutureError(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("future error")
+	fn := func(ctx context.Context) (string, error) {
+		time.Sleep(10 * time.Millisecond)
+		return "", expectedErr
+	}
+
+	future := Start(ctx, fn)
+
+	// Wait with a timeout longer than the execution time
+	result, err := WaitTimeout(50*time.Millisecond, future)
+	if err != expectedErr {
+		t.Errorf("Expected %v, got %v", expectedErr, err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty result on error, got %v", result)
+	}
+}
+
+func TestWaitTimeout_ZeroTimeout(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (string, error) {
+		return "completed", nil
+	}
+
+	future := Start(ctx, fn)
+
+	// Wait with zero timeout - should timeout immediately
+	result, err := WaitTimeout(0, future)
+	if err == nil {
+		t.Error("Expected timeout error with zero timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got %v", err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty result on timeout, got %v", result)
+	}
+}
+
+func TestWaitTimeout_VeryShortTimeout(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (string, error) {
+		time.Sleep(50 * time.Millisecond)
+		return "completed", nil
+	}
+
+	future := Start(ctx, fn)
+
+	// Wait with very short timeout
+	result, err := WaitTimeout(1*time.Nanosecond, future)
+	if err == nil {
+		t.Error("Expected timeout error with very short timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got %v", err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty result on timeout, got %v", result)
+	}
+}
+
+func TestWaitTimeout_AlreadyCompleted(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (int, error) {
+		return 42, nil
+	}
+
+	future := Start(ctx, fn)
+	
+	// Wait for the future to complete first
+	_, err := future.Wait()
+	if err != nil {
+		t.Fatalf("Future should complete successfully: %v", err)
+	}
+
+	// Now call WaitTimeout on already completed future
+	result, err := WaitTimeout(10*time.Millisecond, future)
+	if err != nil {
+		t.Errorf("Expected no error for already completed future, got %v", err)
+	}
+	if result != 42 {
+		t.Errorf("Expected 42, got %v", result)
+	}
+}
+
+func TestWaitTimeout_NotStarted(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (string, error) {
+		return "completed", nil
+	}
+
+	// Create future but don't start it
+	future := New(ctx, fn)
+
+	// WaitTimeout should timeout since future is not started
+	result, err := WaitTimeout(20*time.Millisecond, future)
+	if err == nil {
+		t.Error("Expected timeout error for non-started future")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected context.DeadlineExceeded, got %v", err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty result on timeout, got %v", result)
+	}
+}
+
+func TestWaitTimeout_ConcurrentCalls(t *testing.T) {
+	ctx := context.Background()
+	fn := func(ctx context.Context) (int, error) {
+		time.Sleep(30 * time.Millisecond)
+		return 100, nil
+	}
+
+	future := Start(ctx, fn)
+
+	// Make concurrent calls to WaitTimeout
+	results := make(chan struct {
+		result int
+		err    error
+	}, 3)
+
+	for i := 0; i < 3; i++ {
+		go func() {
+			result, err := WaitTimeout(100*time.Millisecond, future)
+			results <- struct {
+				result int
+				err    error
+			}{result, err}
+		}()
+	}
+
+	// Collect all results
+	for i := 0; i < 3; i++ {
+		select {
+		case res := <-results:
+			if res.err != nil {
+				t.Errorf("Expected no error from concurrent WaitTimeout, got %v", res.err)
+			}
+			if res.result != 100 {
+				t.Errorf("Expected 100, got %v", res.result)
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("Timeout waiting for concurrent WaitTimeout calls")
+		}
+	}
+}
+
+func TestWaitTimeout_DifferentTypes(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with different return types
+	t.Run("string", func(t *testing.T) {
+		fn := func(ctx context.Context) (string, error) {
+			return "test", nil
+		}
+		future := Start(ctx, fn)
+		result, err := WaitTimeout(50*time.Millisecond, future)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if result != "test" {
+			t.Errorf("Expected 'test', got %v", result)
+		}
+	})
+
+	t.Run("int", func(t *testing.T) {
+		fn := func(ctx context.Context) (int, error) {
+			return 42, nil
+		}
+		future := Start(ctx, fn)
+		result, err := WaitTimeout(50*time.Millisecond, future)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if result != 42 {
+			t.Errorf("Expected 42, got %v", result)
+		}
+	})
+
+	t.Run("struct", func(t *testing.T) {
+		type TestStruct struct {
+			Value string
+		}
+		fn := func(ctx context.Context) (TestStruct, error) {
+			return TestStruct{Value: "test"}, nil
+		}
+		future := Start(ctx, fn)
+		result, err := WaitTimeout(50*time.Millisecond, future)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if result.Value != "test" {
+			t.Errorf("Expected 'test', got %v", result.Value)
+		}
+	})
+}

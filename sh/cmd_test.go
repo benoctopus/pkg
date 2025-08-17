@@ -417,3 +417,316 @@ func TestEmptyOptHandling(t *testing.T) {
 		}
 	}
 }
+
+// TestCmdRun tests the synchronous Run() method
+func TestCmdRun(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test basic Run() execution
+	cmd := sh.New("echo").
+		Arg("hello run").
+		Build(ctx)
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	output := strings.TrimSpace(string(result.Stdout()))
+	if output != "hello run" {
+		t.Errorf("Expected 'hello run', got '%s'", output)
+	}
+}
+
+// TestCmdRunWithError tests Run() method with a failing command
+func TestCmdRunWithError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Use a command that will fail
+	cmd := sh.New("false").Build(ctx)
+
+	result, err := cmd.Run()
+	// err should not be nil for a failing command, but the result should still be available
+	if err == nil {
+		t.Error("Expected error from failing command")
+	}
+
+	if result.ExitCode() == 0 {
+		t.Errorf("Expected non-zero exit code, got %d", result.ExitCode())
+	}
+}
+
+// TestCmdRunWithStdout tests Run() method with stdout redirection
+func TestCmdRunWithStdout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf strings.Builder
+	cmd := sh.New("echo").
+		Arg("run stdout test").
+		Build(ctx).
+		WithStdout(&buf)
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	// Check that output was written to our buffer
+	bufOutput := strings.TrimSpace(buf.String())
+	if bufOutput != "run stdout test" {
+		t.Errorf("Expected 'run stdout test' in buffer, got '%s'", bufOutput)
+	}
+
+	// Check that output is also available in result
+	resultOutput := strings.TrimSpace(string(result.Stdout()))
+	if resultOutput != "run stdout test" {
+		t.Errorf("Expected 'run stdout test' in result, got '%s'", resultOutput)
+	}
+}
+
+// TestCmdRunWithStderr tests Run() method with stderr redirection
+func TestCmdRunWithStderr(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf strings.Builder
+	cmd := sh.New("sh").
+		OptV("-c", "echo 'run stderr test' >&2").
+		Build(ctx).
+		WithStderr(&buf)
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	// Check that stderr was written to our buffer
+	bufOutput := strings.TrimSpace(buf.String())
+	if bufOutput != "run stderr test" {
+		t.Errorf("Expected 'run stderr test' in buffer, got '%s'", bufOutput)
+	}
+
+	// Check that stderr is also available in result
+	resultOutput := strings.TrimSpace(string(result.Stderr()))
+	if resultOutput != "run stderr test" {
+		t.Errorf("Expected 'run stderr test' in result, got '%s'", resultOutput)
+	}
+}
+
+// TestCmdRunWithStdin tests Run() method with stdin input
+func TestCmdRunWithStdin(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	input := strings.NewReader("run stdin test")
+	cmd := sh.New("cat").
+		Build(ctx).
+		WithStdin(input)
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	output := strings.TrimSpace(string(result.Stdout()))
+	if output != "run stdin test" {
+		t.Errorf("Expected 'run stdin test', got '%s'", output)
+	}
+}
+
+// TestCmdRunWithEnv tests Run() method with environment variables
+func TestCmdRunWithEnv(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := sh.New("env").
+		Build(ctx).
+		WithEnv("RUN_TEST_VAR", "run_value")
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	output := string(result.Stdout())
+	if !strings.Contains(output, "RUN_TEST_VAR=run_value") {
+		t.Errorf("Expected output to contain 'RUN_TEST_VAR=run_value', got: %s", output)
+	}
+}
+
+// TestCmdRunWithDir tests Run() method with working directory
+func TestCmdRunWithDir(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := sh.New("pwd").
+		Build(ctx).
+		WithDir("/tmp")
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	output := strings.TrimSpace(string(result.Stdout()))
+	if output != "/tmp" {
+		t.Errorf("Expected '/tmp', got '%s'", output)
+	}
+}
+
+// TestCmdRunWithInteractive tests Run() method with interactive mode
+func TestCmdRunWithInteractive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := sh.New("echo").
+		Arg("run interactive test").
+		Build(ctx).
+		WithInteractive()
+
+	result, err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	// The output should still be captured in the result
+	output := strings.TrimSpace(string(result.Stdout()))
+	if output != "run interactive test" {
+		t.Errorf("Expected 'run interactive test', got '%s'", output)
+	}
+}
+
+// TestCmdRunVsStartWait tests that Run() produces the same result as Start()/Wait()
+func TestCmdRunVsStartWait(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test with Run()
+	cmd1 := sh.New("echo").
+		Arg("comparison test").
+		Build(ctx)
+
+	result1, err1 := cmd1.Run()
+	if err1 != nil {
+		t.Fatalf("Run() failed: %v", err1)
+	}
+
+	// Test with Start()/Wait()
+	cmd2 := sh.New("echo").
+		Arg("comparison test").
+		Build(ctx)
+
+	cmd2.Start()
+	result2, err2 := cmd2.Wait()
+	if err2 != nil {
+		t.Fatalf("Start()/Wait() failed: %v", err2)
+	}
+
+	// Results should be identical
+	if result1.ExitCode() != result2.ExitCode() {
+		t.Errorf(
+			"Exit codes differ: Run()=%d, Start()/Wait()=%d",
+			result1.ExitCode(),
+			result2.ExitCode(),
+		)
+	}
+
+	output1 := string(result1.Stdout())
+	output2 := string(result2.Stdout())
+	if output1 != output2 {
+		t.Errorf("Stdout differs: Run()='%s', Start()/Wait()='%s'", output1, output2)
+	}
+
+	stderr1 := string(result1.Stderr())
+	stderr2 := string(result2.Stderr())
+	if stderr1 != stderr2 {
+		t.Errorf("Stderr differs: Run()='%s', Start()/Wait()='%s'", stderr1, stderr2)
+	}
+}
+
+// TestCmdRunSynchronous tests that Run() is synchronous (blocks until completion)
+func TestCmdRunSynchronous(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	cmd := sh.New("sleep").
+		Arg("1").
+		Build(ctx)
+
+	result, err := cmd.Run()
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Run() failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	// Should have taken at least 1 second (synchronous execution)
+	if elapsed < time.Second {
+		t.Errorf("Expected Run() to block for at least 1 second, but it took %v", elapsed)
+	}
+}
+
+// TestCmdRunWithPipe tests Run() method with piped commands
+func TestCmdRunWithPipe(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create a pipe: echo "hello world test" | wc -w
+	echoCmd := sh.New("echo").
+		Arg("hello world test").
+		Build(ctx)
+
+	pipeBuilder := echoCmd.Pipe("wc")
+	pipeCmd := pipeBuilder.OptB("-w").Build()
+
+	result, err := pipeCmd.Run()
+	if err != nil {
+		t.Fatalf("Run() with pipe failed: %v", err)
+	}
+
+	if result.ExitCode() != 0 {
+		t.Errorf("Expected exit code 0, got %d", result.ExitCode())
+	}
+
+	// wc -w should return "3" for "hello world test"
+	output := strings.TrimSpace(string(result.Stdout()))
+	if output != "3" {
+		t.Errorf("Expected '3', got '%s'", output)
+	}
+}

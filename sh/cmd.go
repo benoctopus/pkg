@@ -63,6 +63,9 @@ type Cmd interface {
 	// Pipe creates a pipe builder that will pipe this command's stdout
 	// to the stdin of the specified command.
 	Pipe(cmd string) *PipeBuilder
+	// Start begins the command execution asynchronously.
+	// Returns a Future that can be used to wait for completion.
+	Run() (Result, error)
 }
 
 // Context is an alias for context.Context for convenience.
@@ -238,7 +241,13 @@ func (cm *cmdImpl) Cancel() {
 	}
 }
 
+func (cm *cmdImpl) Run() (Result, error) {
+	cm.execute()
+	return cm.result, cm.err
+}
+
 func (cm *cmdImpl) Wait() (Result, error) {
+	cm.Start()
 	if cm.parent != nil {
 		r, err := cm.parent.Wait()
 		if err != nil {
